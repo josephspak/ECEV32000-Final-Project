@@ -1,0 +1,107 @@
+
+# coding: utf-8
+
+# In[2]:
+
+import os
+
+
+# In[3]:
+
+# set working directory
+os.chdir("../CSB/Final")
+
+
+# In[127]:
+
+# for regex
+import re
+# for arrays
+import numpy as np
+# import Biopython tools for gene & protein analysis
+from Bio.Seq import translate
+from Bio.SeqUtils.ProtParam import ProteinAnalysis
+import codecs
+# for encoding snapgene file
+types_of_encoding = ["utf8", "cp1252"]
+
+# create an array to hold all of the analyzed data
+dataArray = np.empty( (0,6) )
+
+# use glob to check each file in "Constructs" that starts with "pMNR"
+import glob
+for name in glob.glob('Constructs/pMNR*.dna'):
+    # identify construct number
+    i = re.search(r"pMNR\d\d\d", name).group()[4:]
+    
+    # Convert Snapgene files to readable format & pull DNA sequence
+    # that are longer than 100 char (ie longer than primers or restriction sites) 
+    for encoding_type in types_of_encoding:
+        with codecs.open(name, encoding = encoding_type, 
+                         errors ='replace') as DNAfile:
+            construct = DNAfile.read()
+            sequence = re.search(r"[atgcATGC]{100,}", 
+                                 construct).group()
+    
+    # Determine whether DNA construct is for transfection into S2 or Sf9 cells
+    # First search gene to see if it contains BiP signal sequence
+    gene = re.search(r"ATGAAGTTATGCATATTACTGGCCGTCGTGGCCTTTGTTGGCCTCTCGCTCGGG\w+taaGATATCCAGCACAGTGGcggccgc" , 
+                     sequence, re.IGNORECASE)
+    if(gene != None): # i.e. if gene contains above BiP signal sequence
+        gene = gene.group()[54:-24]
+        signal = "BiP"
+    else: # if gene does not contain BiP signal sequence, search for GP67
+        gene = re.search(r"ATGCTACTAGTAAATCAGTCACACCAAGGCTTCAATAAGGAACACACAAGCAAGATGGTAAGCGCTATTGTTTTATATGTGCTTTTGGCGGCGGCGGCGCATTCTGCCTTTGCG\w+taaGCGGCCGCTGCAGATCTgatccTTTCCTGGGAC" , 
+                         sequence, re.IGNORECASE).group()
+        if(gene != None): #i.e. if gene contains above GP67 signal sequence
+            gene = gene[114:-33]
+            signal = "GP67"
+        else: # if gene contains an unidentified signal peptide
+            signal = "N/A"
+    
+    basePairs = len(gene)
+    # translate gene and analyze protein in current file
+    protein = translate(gene[:-3])
+    analyzedProt = ProteinAnalysis(protein)
+    # compile data into an array
+    tempArray = np.array([i, basePairs, signal, round(analyzedProt.molecular_weight() / 1000, 2),
+                          gene, protein])
+    dataArray = np.vstack((dataArray, tempArray))
+    
+# arrange data into a table, minus gene & protein sequences
+import pandas
+dataTable = pandas.DataFrame(dataArray[:,0:tempArray.size - 2], index = dataArray[:,0])
+
+# Find possible additional mass of protein construct due to N-linked glycosylation
+# and add data to table
+j = 0
+NglycMassCol = np.empty((0,1))
+NglycSitesCol = np.empty((0,1))
+for k in dataArray[:,0]:
+    Nglyc = re.findall(r"N\w[S,T,C]", dataArray[j,5])
+    NglycMass = 1.136 * len(Nglyc)
+    NglycTemp = round(float(dataArray[j,3]) + NglycMass, 2)
+    NglycMassCol = np.vstack((NglycMassCol, NglycTemp))
+    NglycSitesCol = np.vstack((NglycSitesCol, len(Nglyc)))
+    j = j + 1
+dataTable = np.hstack((dataTable, NglycMassCol))
+dataTable = np.hstack((dataTable, NglycSitesCol))
+
+# A function that accepts the snapgene file name and returns details
+# on base pair number (for PCR), signal sequence (for cell lines), 
+# and molecular weight range (for protein gel/Western blot)
+def constructParam(constructName):
+    constructNum = int(re.search(r"\d+", constructName).group())
+    for l in dataTable[:,0]:
+        row = int(l) - 1
+        if constructNum == int(dataArray[row, 0]):
+            print("Construct", constructNum, ":\nGene is",
+                 dataTable[row, 1], "base pairs\nProtein is", dataTable[row, 3],
+                 "kDa\n", dataTable[row, 5], "estimated N-linked glycosylation sites\n",
+                  "With glycosylation, protein is an estimated", dataTable[row, 4], "kDa.")
+
+
+# In[ ]:
+
+
+
